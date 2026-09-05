@@ -42,7 +42,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Zagros Fire Alert Bot is Running Live with Robust Weather API!"
+    return "Zagros Fire Alert Bot is Running Live with Multi-API Weather System!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -109,46 +109,76 @@ def get_location_name(lat, lon):
             if parts: return " - ".join(parts), state or "نامشخص"
         return "منطقه نامشخص (داخل جنگل‌های زاگرس)", "نامشخص"
     except Exception:
-        return "منطقه نامشخص (خطا در اتصال به سرویس نام‌گذاری)", "نامشخص"
+        return "منطقه نامشخص", "نامشخص"
 
+# سیستم چندگانه دریافت آب‌وهوا (چندین API مختلف به ترتیب امتحان می‌شوند)
 def get_weather_info(lat, lon):
-    # تلاش اول: استفاده از سرور اصلی Open-Meteo
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+
+    # ۱. روش اول: استفاده از wttr.in (یک سرویس هواشناسی رایگان، سریع و بدون نیاز به کلید)
     try:
-        response = requests.get(url, timeout=7)
+        url = f"https://wttr.in/{lat},{lon}?format=j1"
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            current = data.get("current_condition", [{}])[0]
+            temp = current.get("temp_C")
+            humidity = current.get("humidity")
+            wind_speed = current.get("windspeedKmph")
+            desc = current.get("weatherDesc", [{}])[0].get("value", "")
+            if temp:
+                return f"🌡️ دما: `{temp}°C`\n💧 رطوبت: `{humidity}%`\n💨 باد: `{wind_speed} km/h`\n☁️ وضعیت: `{desc}`"
+    except Exception:
+        pass
+
+    # ۲. روش دوم: سرور اصلی Open-Meteo
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m"
+        response = requests.get(url, timeout=5)
         if response.status_code == 200:
             current = response.json().get("current", {})
             temp = current.get("temperature_2m")
             humidity = current.get("relative_humidity_2m")
             wind_speed = current.get("wind_speed_10m")
             if temp is not None:
-                return f"🌡️ دما: `{temp}°C`\n💧 رطوبت: `{humidity if humidity is not None else 'رطوبت نامشخص'}%`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '0'} km/h`"
+                return f"🌡️ دما: `{temp}°C`\n💧 رطوبت: `{humidity if humidity is not None else '--'}%`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '--'} km/h`"
     except Exception:
         pass
 
-    # تلاش دوم (پشتیبان): استفاده از آدرس جایگزین (Archive/Backup endpoint)
-    backup_url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&current_weather=true"
+    # ۳. روش سوم: سرور بایگانی و پشتیبان Open-Meteo
     try:
-        response = requests.get(backup_url, timeout=7)
+        url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&current_weather=true"
+        response = requests.get(url, timeout=5)
         if response.status_code == 200:
             current = response.json().get("current_weather", {})
             temp = current.get("temperature")
             wind_speed = current.get("windspeed")
             if temp is not None:
-                return f"🌡️ دما: `{temp}°C`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '0'} km/h`"
+                return f"🌡️ دما: `{temp}°C`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '--'} km/h`"
     except Exception:
         pass
 
-    return "🌡️ اطلاعات هواشناسی در حال حاضر در دسترس نیست (خطا در ارتباط با سرور آب‌وهوا)"
+    # ۴. روش چهارم: استفاده از دامنه‌ی کمکی متناظر
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            current = response.json().get("current_weather", {})
+            temp = current.get("temperature")
+            wind_speed = current.get("windspeed")
+            if temp is not None:
+                return f"🌡️ دما: `{temp}°C`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '--'} km/h`"
+    except Exception:
+        pass
+
+    return "🌡️ اطلاعات هواشناسی موقتاً از سرورهای متعدد دریافت نشد."
 
 def get_city_coordinates(city_name):
     city_name = city_name.strip()
     
-    # ۱. بررسی اولیه در لیست شهرهای محبوب فارسی
     if city_name in POPULAR_CITIES:
         return POPULAR_CITIES[city_name][0], POPULAR_CITIES[city_name][1], city_name
     
-    # ۲. بررسی برای حالت انگلیسی شهرهای محبوب
     city_title_case = city_name.capitalize()
     popular_english = {
         "Tehran": ("تهران", 35.6892, 51.3890),
@@ -168,7 +198,6 @@ def get_city_coordinates(city_name):
         p_name, lat, lon = popular_english[city_title_case]
         return lat, lon, p_name
 
-    # ۳. جستجوی آنلاین سراسری
     try:
         url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=10&language=fa"
         response = requests.get(url, timeout=5)
@@ -193,9 +222,8 @@ def send_city_weather(chat_id, city_name):
         bot.send_message(
             chat_id, 
             f"❌ شهر یا منطقه «{city_name}» پیدا نشد.\n\n"
-            "لطفاً نام شهر را به درستی وارد کنید. مثال:\n"
-            "🇮🇷 فارسی: `/weather شیراز`\n"
-            "🇬🇧 انگلیسی: `/weather Shiraz`", 
+            "لطفاً نام شهر را به فارسی یا انگلیسی وارد کنید. مثال:\n"
+            "`/weather سنندج` یا `/weather Tehran`", 
             parse_mode="Markdown"
         )
         return
@@ -252,9 +280,9 @@ def send_welcome(message):
         message, 
         "سلام! سیستم پایش هوشمند آتش‌سوزی زاگرس فعال است.\n\n"
         "💡 **راهنمای آب‌وهوا:**\n"
-        "شما می‌توانید نام هر شهری را به **فارسی** یا **انگلیسی** ارسال کنید:\n"
-        "• `/weather Tehran`\n"
-        "• `/weather مشهد`", 
+        "نام هر شهری را به فارسی یا انگلیسی بفرستید تا آب‌وهوای لحظه‌ای آن نمایش داده شود:\n"
+        "• `/weather تهران`\n"
+        "• `/weather Kermanshah`", 
         reply_markup=get_main_menu()
     )
 
@@ -275,7 +303,7 @@ def weather_command(message):
         bot.reply_to(
             message, 
             "🌤️ لطفاً نام شهر را به فارسی یا انگلیسی بعد از دستور بنویسید:\n"
-            "مثال: `/weather Isfahan` یا `/weather تبریز`", 
+            "مثال: `/weather مریوان` یا `/weather Sanandaj`", 
             reply_markup=markup, 
             parse_mode="Markdown"
         )
@@ -436,7 +464,7 @@ if __name__ == "__main__":
     while True:
         try:
             bot.remove_webhook()
-            print("Bot is starting polling with robust weather backup system...")
+            print("Bot is starting polling with Multi-API Weather backup system...")
             bot.infinity_polling(skip_pending=True, interval=2, timeout=20)
         except Exception as e:
             print(f"Error encountered: {e}")
