@@ -15,7 +15,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
-    server_address = ('', port)
+    server_address = ('0.0.0.0', port)
     httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
     print(f"🌐 وب‌سرور پشتیبان روی پورت {port} فعال شد.")
     httpd.serve_forever()
@@ -24,10 +24,11 @@ def run_dummy_server():
 TELEGRAM_BOT_TOKEN = "8918660280:AAF2CMZ1aFG40I821kSK6gL2hCCVJh17diw"
 MAP_KEY = "0MzpvgaGxwaZTsf7t5gHjPDcdm2lGKPnALVOQXa2"
 
-# اتصال مستقیم (بدون پروکسی برای محیط Render)
+# شناسه عددی (Chat ID) مدیریت
+ADMIN_CHAT_ID = 1481775235 
+
 PROXIES = None
 
-# لیست منابع داده ماهواره‌ای جهت بررسی خودکار
 SOURCES = [
     {
         "name": "NASA FIRMS (VIIRS SNPP)",
@@ -132,7 +133,7 @@ def send_alert_to_all(message, lat, lon):
         except Exception as e:
             print(f"خطا در ارسال به {chat_id}: {e}")
 
-# ۵. توابع دریافت و پردازش انواع فرمت‌ها
+# ۵. توابع دریافت و پردازش داده‌ها
 def fetch_from_csv_source(source):
     res = requests.get(source["url"], proxies=PROXIES, timeout=15)
     if res.status_code == 200:
@@ -220,7 +221,29 @@ def handle_telegram_updates():
 
                         add_user(chat_id)
 
-                        if text == "/start":
+                        # دستور اختصاصی ارسال پیام همگانی (فقط برای آیدی شما)
+                        if text.startswith("/bc ") and chat_id == ADMIN_CHAT_ID:
+                            broadcast_msg = text.replace("/bc ", "").strip()
+                            users = get_all_users()
+                            sent_count = 0
+                            for u_id in users:
+                                try:
+                                    requests.post(
+                                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                        json={"chat_id": u_id, "text": f"📢 **پیام مدیریت:**\n\n{broadcast_msg}", "parse_mode": "Markdown"},
+                                        proxies=PROXIES, timeout=5
+                                    )
+                                    sent_count += 1
+                                except Exception:
+                                    pass
+                            
+                            requests.post(
+                                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                json={"chat_id": chat_id, "text": f"✅ پیام شما با موفقیت برای {sent_count} کاربر ارسال شد."},
+                                proxies=PROXIES
+                            )
+
+                        elif text == "/start":
                             welcome = (
                                 "سلام! 👋\n"
                                 "به سامانه پایش هوشمند و خودکار آتش‌سوزی زاگرس خوش آمدید.\n\n"
@@ -273,9 +296,6 @@ def handle_telegram_updates():
 # ۷. نقطه شروع برنامه
 if __name__ == "__main__":
     init_db()
-    # شروع سرور وب در یک Thread جداگانه برای عبور از تست Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    # شروع حلقه بررسی ماهواره‌ها در یک Thread جداگانه
     threading.Thread(target=check_fires_loop, daemon=True).start()
-    # اجرای دریافت پیام‌های تلگرام
     handle_telegram_updates()
