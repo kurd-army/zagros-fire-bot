@@ -1,9 +1,26 @@
+import os
 import sqlite3
 import threading
 import time
 import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ۱. تنظیمات اختصاصی
+# ۱. ساخت یک سرور وب ساده جهت عبور از اسکن پورت Render
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Zagros Fire Monitoring Bot is Running Online!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server_address = ('', port)
+    httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
+    print(f"🌐 وب‌سرور پشتیبان روی پورت {port} فعال شد.")
+    httpd.serve_forever()
+
+# ۲. تنظیمات اختصاصی ربات
 TELEGRAM_BOT_TOKEN = "8918660280:AAF2CMZ1aFG40I821kSK6gL2hCCVJh17diw"
 MAP_KEY = "0MzpvgaGxwaZTsf7t5gHjPDcdm2lGKPnALVOQXa2"
 
@@ -39,7 +56,7 @@ SOURCES = [
     }
 ]
 
-# ۲. مدیریت پایگاه داده (SQLite)
+# ۳. مدیریت پایگاه داده (SQLite)
 def init_db():
     conn = sqlite3.connect("zagros_bot.db")
     cursor = conn.cursor()
@@ -96,11 +113,11 @@ def get_last_fire():
     conn.close()
     return last
 
-# ۳. ارسال پیام به کاربران
+# ۴. ارسال پیام به کاربران
 def send_alert_to_all(message, lat, lon):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     users = get_all_users()
-
+    
     for chat_id in users:
         payload = {
             "chat_id": chat_id,
@@ -115,7 +132,7 @@ def send_alert_to_all(message, lat, lon):
         except Exception as e:
             print(f"خطا در ارسال به {chat_id}: {e}")
 
-# ۴. توابع دریافت و پردازش انواع فرمت‌ها
+# ۵. توابع دریافت و پردازش انواع فرمت‌ها
 def fetch_from_csv_source(source):
     res = requests.get(source["url"], proxies=PROXIES, timeout=15)
     if res.status_code == 200:
@@ -175,7 +192,7 @@ def check_fires_loop():
                     success = fetch_from_csv_source(source)
                 elif source["type"] == "geojson":
                     success = fetch_from_geojson_source(source)
-
+                
                 if success:
                     print(f"✅ داده‌ها با موفقیت از منبع [{source['name']}] دریافت شدند.")
                     break
@@ -184,11 +201,11 @@ def check_fires_loop():
 
         time.sleep(600)
 
-# ۵. مدیریت ربات تلگرام
+# ۶. مدیریت ربات تلگرام
 def handle_telegram_updates():
     last_update_id = 0
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-
+    
     print("🤖 ربات پایش ۲۴/۷ زاگرس فعال شد...")
     while True:
         try:
@@ -211,7 +228,7 @@ def handle_telegram_updates():
                                 "🔹 /status - وضعیت سیستم و منابع فعال\n"
                                 "🔹 /last_fire - دریافت آخرین گزارش ثبت‌شده"
                             )
-                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                                           json={"chat_id": chat_id, "text": welcome}, proxies=PROXIES)
 
                         elif text == "/status":
@@ -222,7 +239,7 @@ def handle_telegram_updates():
                                 f"🌐 **تعداد منابع تحت پایش:** {len(SOURCES)} منبع معتبر جهانی\n"
                                 f"📍 **منطقه پایش:** زاگرس"
                             )
-                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                                           json={"chat_id": chat_id, "text": status_msg, "parse_mode": "Markdown"}, proxies=PROXIES)
 
                         elif text == "/last_fire":
@@ -247,14 +264,18 @@ def handle_telegram_updates():
                                 }
                                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json=payload, proxies=PROXIES)
                             else:
-                                requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                                               json={"chat_id": chat_id, "text": "هنوز هیچ داده‌ای ثبت نشده است."}, proxies=PROXIES)
 
         except Exception as e:
             time.sleep(5)
 
-# ۶. نقطه شروع برنامه
+# ۷. نقطه شروع برنامه
 if __name__ == "__main__":
     init_db()
+    # شروع سرور وب در یک Thread جداگانه برای عبور از تست Render
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # شروع حلقه بررسی ماهواره‌ها در یک Thread جداگانه
     threading.Thread(target=check_fires_loop, daemon=True).start()
+    # اجرای دریافت پیام‌های تلگرام
     handle_telegram_updates()
