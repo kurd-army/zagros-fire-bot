@@ -225,4 +225,6 @@ threading.Thread(target=run_web, daemon=True).start()
 threading.Thread(target=check_fires_loop, daemon=True).start()
 
 if __name__ == "__main__":
+    bot.remove_webhook()  # پاک کردن هرگونه وب‌هوک یا اتصال تداخلی قبلی
     bot.infinity_polling(skip_pending=True)
+
