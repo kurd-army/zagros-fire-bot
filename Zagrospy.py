@@ -42,7 +42,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Zagros Fire Alert Bot is Running Live with Multi-language City Search!"
+    return "Zagros Fire Alert Bot is Running Live with Robust Weather API!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -112,18 +112,34 @@ def get_location_name(lat, lon):
         return "منطقه نامشخص (خطا در اتصال به سرویس نام‌گذاری)", "نامشخص"
 
 def get_weather_info(lat, lon):
+    # تلاش اول: استفاده از سرور اصلی Open-Meteo
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m"
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=7)
         if response.status_code == 200:
             current = response.json().get("current", {})
-            temp = current.get("temperature_2m", "نامشخص")
-            humidity = current.get("relative_humidity_2m", "نامشخص")
-            wind_speed = current.get("wind_speed_10m", "نامشخص")
-            return f"🌡️ دما: `{temp}°C`\n💧 رطوبت: `{humidity}%`\n💨 سرعت باد: `{wind_speed} km/h`"
+            temp = current.get("temperature_2m")
+            humidity = current.get("relative_humidity_2m")
+            wind_speed = current.get("wind_speed_10m")
+            if temp is not None:
+                return f"🌡️ دما: `{temp}°C`\n💧 رطوبت: `{humidity if humidity is not None else 'رطوبت نامشخص'}%`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '0'} km/h`"
     except Exception:
         pass
-    return "🌡️ اطلاعات هواشناسی در دسترس نیست"
+
+    # تلاش دوم (پشتیبان): استفاده از آدرس جایگزین (Archive/Backup endpoint)
+    backup_url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&current_weather=true"
+    try:
+        response = requests.get(backup_url, timeout=7)
+        if response.status_code == 200:
+            current = response.json().get("current_weather", {})
+            temp = current.get("temperature")
+            wind_speed = current.get("windspeed")
+            if temp is not None:
+                return f"🌡️ دما: `{temp}°C`\n💨 سرعت باد: `{wind_speed if wind_speed is not None else '0'} km/h`"
+    except Exception:
+        pass
+
+    return "🌡️ اطلاعات هواشناسی در حال حاضر در دسترس نیست (خطا در ارتباط با سرور آب‌وهوا)"
 
 def get_city_coordinates(city_name):
     city_name = city_name.strip()
@@ -132,7 +148,7 @@ def get_city_coordinates(city_name):
     if city_name in POPULAR_CITIES:
         return POPULAR_CITIES[city_name][0], POPULAR_CITIES[city_name][1], city_name
     
-    # ۲. بررسی برای حالت‌هایی که کاربر نام انگلیسی شهرهای محبوب را وارد کرده (حساس به بزرگ و کوچک بودن حروف)
+    # ۲. بررسی برای حالت انگلیسی شهرهای محبوب
     city_title_case = city_name.capitalize()
     popular_english = {
         "Tehran": ("تهران", 35.6892, 51.3890),
@@ -152,22 +168,19 @@ def get_city_coordinates(city_name):
         p_name, lat, lon = popular_english[city_title_case]
         return lat, lon, p_name
 
-    # ۳. جستجوی آنلاین سراسری (پشتیبانی از نام‌های فارسی و انگلیسی کل شهرهای جهان و ایران)
+    # ۳. جستجوی آنلاین سراسری
     try:
         url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=10&language=fa"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             results = response.json().get("results")
             if results:
-                # اولویت اول: پیدا کردن نتیجه‌ای که در کشور ایران (IR) باشد
                 for res in results:
                     if res.get("country_code") == "IR":
                         name = res.get("name")
                         admin1 = res.get("admin1", "")
                         full_name = f"{name} ({admin1})" if admin1 else name
                         return res.get("latitude"), res.get("longitude"), full_name
-                
-                # اگر در ایران نبود، اولین نتیجه جهانی را برگردان
                 return results[0].get("latitude"), results[0].get("longitude"), results[0].get("name")
     except Exception:
         pass
@@ -239,10 +252,9 @@ def send_welcome(message):
         message, 
         "سلام! سیستم پایش هوشمند آتش‌سوزی زاگرس فعال است.\n\n"
         "💡 **راهنمای آب‌وهوا:**\n"
-        "شما می‌توانید نام هر شهری را به **فارسی** یا **انگلیسی** به صورت متنی یا با دستور ارسال کنید:\n"
+        "شما می‌توانید نام هر شهری را به **فارسی** یا **انگلیسی** ارسال کنید:\n"
         "• `/weather Tehran`\n"
-        "• `/weather مشهد`\n"
-        "• یا حتی مستقیم نام شهر را تایپ کنید.", 
+        "• `/weather مشهد`", 
         reply_markup=get_main_menu()
     )
 
@@ -270,7 +282,6 @@ def weather_command(message):
         return
     send_city_weather(message.chat.id, args[1].strip())
 
-# قابلیت جستجوی متنی مستقیم (هم فارسی و هم انگلیسی)
 @bot.message_handler(func=lambda message: not message.text.startswith('/') and len(message.text.strip()) > 1 and len(message.text.strip()) < 30)
 def handle_text_city_search(message):
     text = message.text.strip()
@@ -425,7 +436,7 @@ if __name__ == "__main__":
     while True:
         try:
             bot.remove_webhook()
-            print("Bot is starting polling with multilingual city search...")
+            print("Bot is starting polling with robust weather backup system...")
             bot.infinity_polling(skip_pending=True, interval=2, timeout=20)
         except Exception as e:
             print(f"Error encountered: {e}")
