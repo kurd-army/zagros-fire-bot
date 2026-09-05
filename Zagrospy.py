@@ -219,31 +219,41 @@ def handle_telegram_updates():
                         chat_id = update["message"]["chat"]["id"]
                         text = update["message"].get("text", "").strip()
 
+                        # ثبت کاربر در دیتابیس
                         add_user(chat_id)
 
-                        # دستور اختصاصی ارسال پیام همگانی (فقط برای آیدی شما)
-                        if text.startswith("/bc ") and chat_id == ADMIN_CHAT_ID:
-                            broadcast_msg = text.replace("/bc ", "").strip()
-                            users = get_all_users()
-                            sent_count = 0
-                            for u_id in users:
-                                try:
-                                    requests.post(
-                                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                                        json={"chat_id": u_id, "text": f"📢 **پیام مدیریت:**\n\n{broadcast_msg}", "parse_mode": "Markdown"},
-                                        proxies=PROXIES, timeout=5
-                                    )
-                                    sent_count += 1
-                                except Exception:
-                                    pass
-                            
-                            requests.post(
-                                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                                json={"chat_id": chat_id, "text": f"✅ پیام شما با موفقیت برای {sent_count} کاربر ارسال شد."},
-                                proxies=PROXIES
-                            )
+                        # ۱. اولویت اول: بررسی دستور پخش پیام همگانی (فقط مدیر)
+                        if text.startswith("/bc "):
+                            if chat_id == ADMIN_CHAT_ID:
+                                broadcast_msg = text[4:].strip()
+                                users = get_all_users()
+                                sent_count = 0
+                                for u_id in users:
+                                    try:
+                                        requests.post(
+                                            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                            json={"chat_id": u_id, "text": f"📢 **پیام مدیریت:**\n\n{broadcast_msg}", "parse_mode": "Markdown"},
+                                            proxies=PROXIES, timeout=5
+                                        )
+                                        sent_count += 1
+                                    except Exception:
+                                        pass
+                                
+                                requests.post(
+                                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                    json={"chat_id": chat_id, "text": f"✅ پیام شما با موفقیت برای {sent_count} کاربر ارسال شد."},
+                                    proxies=PROXIES
+                                )
+                            else:
+                                requests.post(
+                                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                    json={"chat_id": chat_id, "text": "⛔️ شما اجازه استفاده از این دستور را ندارید."},
+                                    proxies=PROXIES
+                                )
+                            continue
 
-                        elif text == "/start":
+                        # ۲. سایر دستورات
+                        if text == "/start":
                             welcome = (
                                 "سلام! 👋\n"
                                 "به سامانه پایش هوشمند و خودکار آتش‌سوزی زاگرس خوش آمدید.\n\n"
