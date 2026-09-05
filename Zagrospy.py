@@ -4,6 +4,7 @@ import time
 import threading
 import requests
 import telebot
+from telebot import types
 from flask import Flask
 
 # تنظیمات اصلی ربات و ادمین
@@ -108,7 +109,17 @@ def broadcast_fire_alert(fire_details):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     add_user(message.chat.id)
-    bot.reply_to(message, "سلام! سیستم پایش خودکار آتش‌سوزی زاگرس فعال است.\nمنطقه تحت پوشش: ارومیه تا جنوب زاگرس.")
+    
+    # ساخت دکمه شیشه‌ای برای دسترسی سریع به وضعیت
+    markup = types.InlineKeyboardMarkup()
+    btn_status = types.InlineKeyboardButton("📊 مشاهده وضعیت ربات", callback_data="check_status")
+    markup.add(btn_status)
+    
+    bot.reply_to(
+        message, 
+        "سلام! سیستم پایش خودکار آتش‌سوزی زاگرس فعال است.\nمنطقه تحت پوشش: ارومیه تا جنوب زاگرس.", 
+        reply_markup=markup
+    )
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
@@ -120,6 +131,23 @@ def send_status(message):
     f_count = cursor.fetchone()[0]
     conn.close()
     bot.reply_to(message, f"🟢 ربات آنلاین و فعال\n• کاربران: {u_count}\n• کل حریق‌های ثبت‌شده: {f_count}", parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_status")
+def callback_status(call):
+    conn = sqlite3.connect("zagros_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    u_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM fires")
+    f_count = cursor.fetchone()[0]
+    conn.close()
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id, 
+        f"🟢 ربات آنلاین و فعال\n• کاربران: {u_count}\n• کل حریق‌های ثبت‌شده: {f_count}", 
+        parse_mode="Markdown"
+    )
 
 @bot.message_handler(commands=['last_fire'])
 def send_last_fire(message):
@@ -190,7 +218,7 @@ def check_fires_loop():
             conn.close()
         time.sleep(600)
 
-# اجرای سرور وب در یک ترد جداگانه (برای راضی نگه داشتن رندر)
+# اجرای سرور وب در یک ترد جداگانه
 threading.Thread(target=run_web, daemon=True).start()
 
 # اجرای ترد پایش ماهواره‌ای
