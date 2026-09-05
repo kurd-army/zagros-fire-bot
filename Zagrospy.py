@@ -21,14 +21,28 @@ PROVINCES = [
     "کهگیلویه و بویراحمد", "فارس", "همدان", "همه استان‌ها"
 ]
 
-POPULAR_CITIES = ["ارومیه", "سنندج", "کرمانشاه", "ایلام", "خرم‌آباد", "شهرکرد", "یاسوج", "شیراز"]
+# شهرهای پربازدید برای دسترسی سریع دکمه‌ها
+POPULAR_CITIES = {
+    "تهران": (35.6892, 51.3890),
+    "سنندج": (35.3113, 46.9931),
+    "کرمانشاه": (34.3142, 47.0650),
+    "ارومیه": (37.5527, 45.0758),
+    "ایلام": (33.6392, 46.4228),
+    "خرم‌آباد": (33.4878, 48.3558),
+    "شهرکرد": (32.3256, 50.8644),
+    "یاسوج": (30.6684, 51.5876),
+    "شیراز": (29.5917, 52.5836),
+    "مهاباد": (36.7631, 45.7222),
+    "سقز": (36.2465, 46.2730),
+    "مریوان": (35.5222, 46.1753)
+}
 
 # راه‌اندازی سرور وب برای رندر
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Zagros Fire Alert Bot is Running Live with Interactive Inline Menus!"
+    return "Zagros Fire Alert Bot is Running Live with Multi-language City Search!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -99,42 +113,84 @@ def get_location_name(lat, lon):
 
 def get_weather_info(lat, lon):
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,wind_speed_10m,wind_direction_10m"
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             current = response.json().get("current", {})
             temp = current.get("temperature_2m", "نامشخص")
+            humidity = current.get("relative_humidity_2m", "نامشخص")
             wind_speed = current.get("wind_speed_10m", "نامشخص")
-            return f"🌡️ دما: `{temp}°C` | 💨 سرعت باد: `{wind_speed} km/h`"
+            return f"🌡️ دما: `{temp}°C`\n💧 رطوبت: `{humidity}%`\n💨 سرعت باد: `{wind_speed} km/h`"
     except Exception:
         pass
     return "🌡️ اطلاعات هواشناسی در دسترس نیست"
 
 def get_city_coordinates(city_name):
+    city_name = city_name.strip()
+    
+    # ۱. بررسی اولیه در لیست شهرهای محبوب فارسی
+    if city_name in POPULAR_CITIES:
+        return POPULAR_CITIES[city_name][0], POPULAR_CITIES[city_name][1], city_name
+    
+    # ۲. بررسی برای حالت‌هایی که کاربر نام انگلیسی شهرهای محبوب را وارد کرده (حساس به بزرگ و کوچک بودن حروف)
+    city_title_case = city_name.capitalize()
+    popular_english = {
+        "Tehran": ("تهران", 35.6892, 51.3890),
+        "Sanandaj": ("سنندج", 35.3113, 46.9931),
+        "Kermanshah": ("کرمانشاه", 34.3142, 47.0650),
+        "Urmia": ("ارومیه", 37.5527, 45.0758),
+        "Ilam": ("ایلام", 33.6392, 46.4228),
+        "Khorramabad": ("خرم‌آباد", 33.4878, 48.3558),
+        "Shahrekord": ("شهرکرد", 32.3256, 50.8644),
+        "Yasuj": ("یاسوج", 30.6684, 51.5876),
+        "Shiraz": ("شیراز", 29.5917, 52.5836),
+        "Mahabad": ("مهاباد", 36.7631, 45.7222),
+        "Saqqez": ("سقز", 36.2465, 46.2730),
+        "Marivan": ("مریوان", 35.5222, 46.1753)
+    }
+    if city_title_case in popular_english:
+        p_name, lat, lon = popular_english[city_title_case]
+        return lat, lon, p_name
+
+    # ۳. جستجوی آنلاین سراسری (پشتیبانی از نام‌های فارسی و انگلیسی کل شهرهای جهان و ایران)
     try:
-        url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=1&language=fa"
+        url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=10&language=fa"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             results = response.json().get("results")
             if results:
-                lat = results[0].get("latitude")
-                lon = results[0].get("longitude")
-                name = results[0].get("name")
-                return lat, lon, name
+                # اولویت اول: پیدا کردن نتیجه‌ای که در کشور ایران (IR) باشد
+                for res in results:
+                    if res.get("country_code") == "IR":
+                        name = res.get("name")
+                        admin1 = res.get("admin1", "")
+                        full_name = f"{name} ({admin1})" if admin1 else name
+                        return res.get("latitude"), res.get("longitude"), full_name
+                
+                # اگر در ایران نبود، اولین نتیجه جهانی را برگردان
+                return results[0].get("latitude"), results[0].get("longitude"), results[0].get("name")
     except Exception:
         pass
+        
     return None, None, None
 
 def send_city_weather(chat_id, city_name):
     lat, lon, found_name = get_city_coordinates(city_name)
     if not lat or not lon:
-        bot.send_message(chat_id, f"❌ شهر «{city_name}» پیدا نشد. لطفاً نام شهر را به درستی وارد کنید.", parse_mode="Markdown")
+        bot.send_message(
+            chat_id, 
+            f"❌ شهر یا منطقه «{city_name}» پیدا نشد.\n\n"
+            "لطفاً نام شهر را به درستی وارد کنید. مثال:\n"
+            "🇮🇷 فارسی: `/weather شیراز`\n"
+            "🇬🇧 انگلیسی: `/weather Shiraz`", 
+            parse_mode="Markdown"
+        )
         return
     
     weather = get_weather_info(lat, lon)
     text = (
         f"🌤️ **وضعیت آب‌وهوای لحظه‌ای:** `{found_name}`\n"
-        f"📍 عرض: `{lat}` | طول: `{lon}`\n"
+        f"📍 عرض: `{lat}` | طول: `{lon}`\n\n"
         f"{weather}\n\n"
         f"🔗 [مشاهده روی نقشه گوگل](https://maps.google.com/?q={lat},{lon})"
     )
@@ -149,7 +205,7 @@ def broadcast_fire_alert(fire_details, province_target):
         f"📍 طول جغرافیایی: `{lon}`\n"
         f"🛰️ **منبع ماهواره‌ای:** `{sat_source}`\n"
         f"📅 تاریخ: `{date}` | زمان: `{time_val}`\n"
-        f"📊 میزان اطمینان: `{conf}`\n"
+        f"📊 میزان اطمینان: `{conf}`\n\n"
         f"{weather}\n\n"
         f"🔗 [مشاهده دقیق نقطه روی نقشه گوگل](https://maps.google.com/?q={lat},{lon})"
     )
@@ -167,7 +223,6 @@ def broadcast_fire_alert(fire_details, province_target):
         except Exception:
             pass
 
-# تابع ساخت کیبورد اصلی شیشه‌ای
 def get_main_menu():
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn_prov = types.InlineKeyboardButton("📍 انتخاب استان من", callback_data="open_settings")
@@ -182,8 +237,12 @@ def send_welcome(message):
     add_user(message.chat.id)
     bot.reply_to(
         message, 
-        "سلام! سیستم پایش هوشمند آتش‌سوزی زاگرس فعال است.\n"
-        "از منوی زیر برای دسترسی به امکانات ربات استفاده کنید:", 
+        "سلام! سیستم پایش هوشمند آتش‌سوزی زاگرس فعال است.\n\n"
+        "💡 **راهنمای آب‌وهوا:**\n"
+        "شما می‌توانید نام هر شهری را به **فارسی** یا **انگلیسی** به صورت متنی یا با دستور ارسال کنید:\n"
+        "• `/weather Tehran`\n"
+        "• `/weather مشهد`\n"
+        "• یا حتی مستقیم نام شهر را تایپ کنید.", 
         reply_markup=get_main_menu()
     )
 
@@ -199,16 +258,31 @@ def weather_command(message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         markup = types.InlineKeyboardMarkup(row_width=2)
-        buttons = [types.InlineKeyboardButton(city, callback_data=f"wcity_{city}") for city in POPULAR_CITIES]
+        buttons = [types.InlineKeyboardButton(city, callback_data=f"wcity_{city}") for city in POPULAR_CITIES.keys()]
         markup.add(*buttons)
         bot.reply_to(
             message, 
-            "🌤️ لطفاً یکی از شهرهای زیر را انتخاب کنید یا نام شهر را به این شکل بنویسید:\n`/weather سنندج`", 
+            "🌤️ لطفاً نام شهر را به فارسی یا انگلیسی بعد از دستور بنویسید:\n"
+            "مثال: `/weather Isfahan` یا `/weather تبریز`", 
             reply_markup=markup, 
             parse_mode="Markdown"
         )
         return
     send_city_weather(message.chat.id, args[1].strip())
+
+# قابلیت جستجوی متنی مستقیم (هم فارسی و هم انگلیسی)
+@bot.message_handler(func=lambda message: not message.text.startswith('/') and len(message.text.strip()) > 1 and len(message.text.strip()) < 30)
+def handle_text_city_search(message):
+    text = message.text.strip()
+    lat, lon, found_name = get_city_coordinates(text)
+    if lat and lon:
+        weather = get_weather_info(lat, lon)
+        reply_text = (
+            f"🌤️ **آب‌وهوای منطقه:** `{found_name}`\n"
+            f"{weather}\n\n"
+            f"🔗 [مشاهده روی نقشه گوگل](https://maps.google.com/?q={lat},{lon})"
+        )
+        bot.reply_to(message, reply_text, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -224,20 +298,19 @@ def handle_callbacks(call):
         update_user_province(call.message.chat.id, selected_province)
         bot.answer_callback_query(call.id, f"استان روی «{selected_province}» تنظیم شد.")
         bot.edit_message_text(
-            f"✅ استان شما با موفقیت روی **{selected_province}** تنظیم شد.\nاز این پس هشدارهای این منطقه را دریافت خواهید کرد.",
+            f"✅ استان شما با موفقیت روی **{selected_province}** تنظیم شد.",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="Markdown"
         )
-        # بازگرداندن منوی اصلی پس از تنظیم
         bot.send_message(call.message.chat.id, "منوی اصلی:", reply_markup=get_main_menu())
 
     elif call.data == "open_weather_menu":
         markup = types.InlineKeyboardMarkup(row_width=2)
-        buttons = [types.InlineKeyboardButton(city, callback_data=f"wcity_{city}") for city in POPULAR_CITIES]
+        buttons = [types.InlineKeyboardButton(city, callback_data=f"wcity_{city}") for city in POPULAR_CITIES.keys()]
         markup.add(*buttons)
         bot.answer_callback_query(call.id)
-        bot.edit_message_text("🌤️ لطفاً شهر مورد نظر خود را برای استعلام آب‌وهوا انتخاب کنید:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        bot.edit_message_text("🌤️ یکی از شهرها را انتخاب کنید یا نام هر شهر دیگری را به فارسی یا انگلیسی تایپ کنید:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
     elif call.data.startswith("wcity_"):
         city_name = call.data.replace("wcity_", "")
@@ -268,7 +341,7 @@ def handle_callbacks(call):
                 f"🔥 **آخرین نقطه حرارتی ثبت‌شده:**\n\n"
                 f"📍 منطقه: `{loc_name}`\n"
                 f"🛰️ منبع: `{sat_source}`\n"
-                f"📅 تاریخ: `{date}` | زمان: `{time_val}`\n"
+                f"📅 تاریخ: `{date}` | زمان: `{time_val}`\n\n"
                 f"{weather}\n\n"
                 f"🔗 [مشاهده روی نقشه](https://maps.google.com/?q={lat},{lon})"
             )
@@ -352,7 +425,7 @@ if __name__ == "__main__":
     while True:
         try:
             bot.remove_webhook()
-            print("Bot is starting polling with fully interactive inline menus...")
+            print("Bot is starting polling with multilingual city search...")
             bot.infinity_polling(skip_pending=True, interval=2, timeout=20)
         except Exception as e:
             print(f"Error encountered: {e}")
